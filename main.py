@@ -220,6 +220,10 @@ def build_rules(inp: Inputs) -> List[Rule]:
                       Consequent({"ag": ("very_high", 1.0), "ind": ("high", 1.0), "hh": ("medium", 1.0)})))
     rules.append(Rule(Antecedent([(S["severe"], s)]),
                       Consequent({"ag": ("low", 1.0), "ind": ("low", 1.0), "hh": ("very_high", 1.0)}), weight=1.3))
+    # Extreme cases
+    rules.append(Rule(Antecedent([(R["high"], r), (G["low"], g), (S["moderate"], s)]),
+                      Consequent({"ag": ("high", 1.0), "ind": ("medium", 1.0), "hh": ("medium", 1.0)}), weight=1.0))
+
     not_severe = 1.0 - max(S["severe"](s), S["high"](s))
     if not_severe > 0.0:
         rules.append(Rule(Antecedent([(D["high"], agd)]), Consequent({"ag": ("high", not_severe)}), weight=0.9))
@@ -510,6 +514,28 @@ def plot_reasoning(shapes: Dict[str, List[Tuple[float, float]]],
         plt.title(f"{title_prefix} – {label} Aggregated μ(x)")
         plt.xlabel("%"); plt.ylabel("Membership")
         _maybe_save_or_show(save_dir, f"reason_{title_prefix}_{key}.png".replace(" ", "_"))
+        
+def plot_raw_vs_adjusted(raw, adjusted, save_dir=None):
+    """
+    Compare allocations before and after fairness adjustment.
+    Shows how household water protection affects total distribution.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    labels = ["Agriculture", "Industry", "Households"]
+    x = range(len(labels))
+    width = 0.35
+    plt.figure()
+    plt.bar(x, raw, width, label="Raw Output")
+    plt.bar([i + width for i in x], adjusted, width, label="Adjusted (Fairness Applied)")
+    plt.xticks([i + width / 2 for i in x], labels)
+    plt.ylabel("Allocation (%)")
+    plt.title("Raw vs Adjusted Allocation – Fairness Effect")
+    plt.legend()
+    _maybe_save_or_show(save_dir, "fairness_comparison.png")
+
 
 # --------------------------
 # CLI & Interactive Menu
@@ -599,6 +625,7 @@ def interactive_menu(args: argparse.Namespace) -> None:
             "Membership functions (inputs/outputs)",
             "Country allocation trends over years",
             "Reason view: fuzzy graphs with centroid markers",
+            "Plot Raw vs Adjusted Data",
             "Exit"
         ])
 
@@ -640,8 +667,21 @@ def interactive_menu(args: argparse.Namespace) -> None:
             }
             title = f"{country}_{year}"
             plot_reasoning(shapes, cents, title, save_dir)
-
+            
         elif choice == 6:
+            print("--- Plot Raw Demand vs. Adjusted Allocation ---")
+            country = ask_text("Country", default=default_country)
+            year = ask_int("Year", default=default_year)
+            
+            out, inp = advise_allocation(country=country, year=year, data_path=args.data)
+            
+            raw_data = [inp.ag_demand_pct, inp.ind_demand_pct, inp.hh_demand_pct]
+            # The "adjusted" data is the fuzzy system's output
+            adjusted_data = [out.ag_alloc, out.ind_alloc, out.hh_alloc]
+
+            plot_raw_vs_adjusted(raw_data, adjusted_data, save_dir)
+
+        elif choice == 7:
             print("Goodbye!")
             return
 
@@ -675,16 +715,33 @@ def main() -> None:
 
     # If any explicit viz flags are used, respect them (non-interactive)
     if any([args.viz_fuzzy_outputs, args.viz_membership, args.viz_country_year,
-            args.viz_country_series, args.viz_like_example, args.viz_reasons if hasattr(args,'viz_reasons') else False,
+            args.viz_country_series, args.viz_like_example, args.viz_reason if hasattr(args,'viz_reason') else False,
             args.plot]):
+
         if args.viz_fuzzy_outputs and not args.no_plots:
             viz_fuzzy_outputs(
                 args.country, args.year,
                 rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
                 ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
                 data_path=args.data, save_dir=args.save_dir
-            ); return
-
+            )
+            
+            out, base_inp = (None, None) 
+            try:
+                out, base_inp = advise_allocation(
+                    country=args.country, year=args.year,
+                    rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
+                    ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
+                    data_path=args.data
+                )
+                raw_allocations = [base_inp.ag_demand_pct, base_inp.ind_demand_pct, base_inp.hh_demand_pct]
+                adjusted_allocations = [out.ag_alloc, out.ind_alloc, out.hh_alloc]
+                plot_raw_vs_adjusted(raw_allocations, adjusted_allocations)
+            except Exception as e:
+                print(f"Skipped Raw vs Adjusted plot due to: {e}")
+                
+            return
+        
         if args.viz_membership:
             plot_memberships(args.save_dir); return
 
@@ -692,9 +749,9 @@ def main() -> None:
             if not (args.country and args.year):
                 print("--viz-country-year requires --country and --year"); return
             out, _ = advise_allocation(country=args.country, year=args.year,
-                                       rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
-                                       ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
-                                       data_path=args.data)
+                                        rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
+                                        ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
+                                        data_path=args.data)
             plot_single_allocation_bar(args.country, args.year, out, args.save_dir); return
 
         if args.viz_country_series:
@@ -707,13 +764,13 @@ def main() -> None:
             if not (args.country and args.year):
                 print("--viz-reason(s) requires --country and --year"); return
             _, inp = advise_allocation(country=args.country, year=args.year,
-                                       rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
-                                       ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
-                                       data_path=args.data)
+                                        rainfall_mm=args.rainfall, gw_depl_pct=args.gw, scarcity_level=args.scarcity,
+                                        ag_demand_pct=args.ag, ind_demand_pct=args.ind, hh_demand_pct=args.hh,
+                                        data_path=args.data)
             _, shapes = infer_with_shapes(inp)
             cents = { "ag": _centroid_from_shape(shapes["ag"]),
-                      "ind": _centroid_from_shape(shapes["ind"]),
-                      "hh": _centroid_from_shape(shapes["hh"]) }
+                        "ind": _centroid_from_shape(shapes["ind"]),
+                        "hh": _centroid_from_shape(shapes["hh"]) }
             title = f"{args.country}_{args.year}"
             plot_reasoning(shapes, cents, title, args.save_dir); return
 
