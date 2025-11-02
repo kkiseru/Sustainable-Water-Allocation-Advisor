@@ -111,6 +111,12 @@ for i in range(len(rainfall_vals)):
 fig = plt.figure(figsize=(10, 6))
 ax = fig.add_subplot(111, projection='3d')
 ax.plot_surface(x, y, z, cmap='viridis')
+
+ax.contourf(x, y, z, zdir='z', offset=ax.get_zlim()[0], cmap='viridis', alpha=0.5)
+ax.contourf(x, y, z, zdir='x', offset=x.max()*1.5, cmap='viridis', alpha=0.5)
+ax.contourf(x, y, z, zdir='y', offset=y.max()*1.5, cmap='viridis', alpha=0.5)
+
+ax.view_init(30, 200)
 ax.set_xlabel('Rainfall Impact (mm)')
 ax.set_ylabel('Groundwater Depletion Rate (%)')
 ax.set_zlabel('Predicted Water Scarcity Level')
