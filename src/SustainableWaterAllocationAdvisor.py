@@ -2,123 +2,175 @@ import pandas as pd
 import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
-from skfuzzy import membership as mf
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
-# ------------------------------------------------------------
-# Load dataset
-# ------------------------------------------------------------
+# -----------------------------
+# STEP 1: Load dataset
+# -----------------------------
 df = pd.read_csv('dataset/cleaned_global_water_consumption.csv')
+print("✅ Dataset loaded successfully!")
+print("📊 Columns available:", df.columns.tolist())
 
-# ------------------------------------------------------------
-# Define fuzzy inputs and outputs based on dataset ranges
-# ------------------------------------------------------------
-agriculture = ctrl.Antecedent(np.arange(28.9, 66.6, 0.1), 'Agricultural Water Use (%)')
-industry    = ctrl.Antecedent(np.arange(13.2, 43.6, 0.1), 'Industrial Water Use (%)')
-rainfall    = ctrl.Antecedent(np.arange(700, 2534, 1), 'Rainfall Impact (mm)')
-depletion   = ctrl.Antecedent(np.arange(1.3, 4.33, 0.01), 'Groundwater Depletion Rate (%)')
-scarcity    = ctrl.Consequent(np.arange(0, 11, 1), 'Water Scarcity Level')
+# -----------------------------
+# STEP 2: Ask for country input and filter dataset
+# -----------------------------
+country_name = input("Enter country name: ").strip()
+country_df = df[df['Country'].str.lower() == country_name.lower()]
 
-# ------------------------------------------------------------
-# Define membership functions
-# ------------------------------------------------------------
-# Agricultural Water Use
-agriculture['low']    = mf.trimf(agriculture.universe, [28.9, 30, 40])
-agriculture['medium'] = mf.trimf(agriculture.universe, [35, 45, 55])
-agriculture['high']   = mf.trimf(agriculture.universe, [50, 60, 66.6])
+if country_df.empty:
+	print(f"❌ No data found for '{country_name}'. Using full dataset instead.")
+	country_df = df.copy()
+else:
+	print(f"✅ Using dataset for {country_name} ({len(country_df)} records)")
 
-# Industrial Water Use
-industry['low']    = mf.trimf(industry.universe, [13.2, 15, 25])
-industry['medium'] = mf.trimf(industry.universe, [20, 28, 35])
-industry['high']   = mf.trimf(industry.universe, [30, 40, 43.6])
+# -----------------------------
+# STEP 3: Compute variable ranges
+# -----------------------------
+agri_min, agri_max = country_df['Agricultural Water Use (%)'].min(), country_df['Agricultural Water Use (%)'].max()
+ind_min, ind_max   = country_df['Industrial Water Use (%)'].min(), country_df['Industrial Water Use (%)'].max()
+rain_min, rain_max = country_df['Rainfall Impact (Annual Precipitation in mm)'].min(), country_df['Rainfall Impact (Annual Precipitation in mm)'].max()
 
-# Rainfall Impact
-rainfall['low']    = mf.trimf(rainfall.universe, [700, 900, 1200])
-rainfall['medium'] = mf.trimf(rainfall.universe, [1100, 1600, 2000])
-rainfall['high']   = mf.trimf(rainfall.universe, [1800, 2300, 2534])
+print(f"\nAgriculture range: {agri_min:.2f} – {agri_max:.2f}")
+print(f"Industry range:    {ind_min:.2f} – {ind_max:.2f}")
+print(f"Rainfall range:    {rain_min:.2f} – {rain_max:.2f}")
 
-# Groundwater Depletion Rate
-depletion['low']    = mf.trimf(depletion.universe, [1.3, 1.8, 2.3])
-depletion['medium'] = mf.trimf(depletion.universe, [2.0, 2.7, 3.3])
-depletion['high']   = mf.trimf(depletion.universe, [3.0, 3.7, 4.33])
+# -----------------------------
+# STEP 4: Define fuzzy variables
+# -----------------------------
+agriculture = ctrl.Antecedent(np.arange(agri_min, agri_max + 1, 1), 'agriculture')
+industry    = ctrl.Antecedent(np.arange(ind_min, ind_max + 1, 1), 'industry')
+rainfall    = ctrl.Antecedent(np.arange(rain_min, rain_max + 1, 1), 'rainfall')
+scarcity    = ctrl.Consequent(np.arange(0, 101, 1), 'scarcity')
 
-# Water Scarcity Level
-scarcity['low']    = mf.trimf(scarcity.universe, [0, 2, 4])
-scarcity['medium'] = mf.trimf(scarcity.universe, [3, 5, 7])
-scarcity['high']   = mf.trimf(scarcity.universe, [6, 8, 10])
+# Membership functions
+agriculture['low']    = fuzz.trimf(agriculture.universe, [agri_min, agri_min, (agri_min + agri_max) / 2])
+agriculture['medium'] = fuzz.trimf(agriculture.universe, [agri_min, (agri_min + agri_max) / 2, agri_max])
+agriculture['high']   = fuzz.trimf(agriculture.universe, [(agri_min + agri_max) / 2, agri_max, agri_max])
 
-# ------------------------------------------------------------
-# Define fuzzy rules
-# ------------------------------------------------------------
-rule1 = ctrl.Rule(rainfall['low'] & depletion['high'], scarcity['high'])
-rule2 = ctrl.Rule(rainfall['medium'] & depletion['medium'], scarcity['medium'])
-rule3 = ctrl.Rule(rainfall['high'] & depletion['low'], scarcity['low'])
-rule4 = ctrl.Rule(agriculture['high'] & industry['high'], scarcity['high'])
-rule5 = ctrl.Rule(agriculture['low'] & rainfall['high'], scarcity['low'])
-rule6 = ctrl.Rule(depletion['medium'] & rainfall['low'], scarcity['medium'])
+industry['low']    = fuzz.trimf(industry.universe, [ind_min, ind_min, (ind_min + ind_max) / 2])
+industry['medium'] = fuzz.trimf(industry.universe, [ind_min, (ind_min + ind_max) / 2, ind_max])
+industry['high']   = fuzz.trimf(industry.universe, [(ind_min + ind_max) / 2, ind_max, ind_max])
 
-# Catch-all rule for cases with no strong activation
-rule7 = ctrl.Rule(~rainfall['low'] | ~depletion['high'], scarcity['medium'])
+rainfall['low']    = fuzz.trimf(rainfall.universe, [rain_min, rain_min, (rain_min + rain_max) / 2])
+rainfall['medium'] = fuzz.trimf(rainfall.universe, [rain_min, (rain_min + rain_max) / 2, rain_max])
+rainfall['high']   = fuzz.trimf(rainfall.universe, [(rain_min + rain_max) / 2, rain_max, rain_max])
 
-# ------------------------------------------------------------
-# Control system and simulation
-# ------------------------------------------------------------
-scarcity_ctrl = ctrl.ControlSystem([rule1, rule2, rule3, rule4, rule5, rule6, rule7])
-scarcity_sim  = ctrl.ControlSystemSimulation(scarcity_ctrl)
+scarcity['low']    = fuzz.trimf(scarcity.universe, [0, 0, 40])
+scarcity['medium'] = fuzz.trimf(scarcity.universe, [20, 50, 80])
+scarcity['high']   = fuzz.trimf(scarcity.universe, [60, 100, 100])
 
-# Example input values
-scarcity_sim.input['Agricultural Water Use (%)'] = 55
-scarcity_sim.input['Industrial Water Use (%)'] = 30
-scarcity_sim.input['Rainfall Impact (mm)'] = 1200
-scarcity_sim.input['Groundwater Depletion Rate (%)'] = 3.5
+# -----------------------------
+# STEP 5: Define fuzzy rules
+# -----------------------------
+rule1 = ctrl.Rule(rainfall['low'] & agriculture['high'] & industry['high'], scarcity['high'])
+rule2 = ctrl.Rule(rainfall['medium'] & agriculture['medium'] & industry['medium'], scarcity['medium'])
+rule3 = ctrl.Rule(rainfall['high'] & agriculture['low'] & industry['low'], scarcity['low'])
 
-# Compute fuzzy result
-scarcity_sim.compute()
-print(f"Predicted Water Scarcity Level: {scarcity_sim.output['Water Scarcity Level']:.2f}")
+scarcity_ctrl = ctrl.ControlSystem([rule1, rule2, rule3])
+sim = ctrl.ControlSystemSimulation(scarcity_ctrl)
 
-# ------------------------------------------------------------
-# Visualize membership functions (optional)
-# ------------------------------------------------------------
-agriculture.view()
-industry.view()
-rainfall.view()
-depletion.view()
-scarcity.view()
+# -----------------------------
+# STEP 6: Example simulation
+# -----------------------------
+sample = country_df.iloc[0]
+try:
+	sim.input['rainfall'] = sample['Rainfall Impact (Annual Precipitation in mm)']
+	sim.input['agriculture'] = sample['Agricultural Water Use (%)']
+	sim.input['industry'] = sample['Industrial Water Use (%)']
+	sim.compute()
+	print(f"\n💧 Computed Water Scarcity Level: {sim.output['scarcity']:.2f}")
+except KeyError as e:
+	print(f"❌ KeyError: {e} — please check the column names above.")
 
-# ------------------------------------------------------------
-# 3D Fuzzy surface visualization (Rainfall vs Depletion)
-# ------------------------------------------------------------
-rainfall_vals  = np.arange(700, 2534, 50)
-depletion_vals = np.arange(1.3, 4.33, 0.05)
-x, y = np.meshgrid(rainfall_vals, depletion_vals)
-z = np.zeros_like(x)
+# -----------------------------
+# STEP 7: 2×2 Membership Plots
+# -----------------------------
+fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+axs = axs.ravel()
 
-for i in range(len(rainfall_vals)):
-	for j in range(len(depletion_vals)):
-		sim = ctrl.ControlSystemSimulation(scarcity_ctrl)
-		sim.input['Rainfall Impact (mm)'] = x[j, i]
-		sim.input['Groundwater Depletion Rate (%)'] = y[j, i]
-		sim.input['Agricultural Water Use (%)'] = 45
-		sim.input['Industrial Water Use (%)'] = 25
+def plot_var(ax, var, title):
+	x = var.universe
+	for name, term in var.terms.items():
+		ax.plot(x, term.mf, linewidth=1.5, label=name.capitalize())
+	ax.set_title(title)
+	ax.set_ylim(0, 1.05)
+	ax.set_xlabel('Value')
+	ax.set_ylabel('Membership Degree')
+	ax.legend()
+	ax.grid(True, alpha=0.3)
 
+plot_var(axs[0], rainfall, 'Rainfall Impact (mm)')
+plot_var(axs[1], agriculture, 'Agricultural Water Use (%)')
+plot_var(axs[2], industry, 'Industrial Water Use (%)')
+plot_var(axs[3], scarcity, 'Water Scarcity Level')
+
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# STEP 8: 3D Surface Comparisons (side-by-side)
+# -----------------------------
+rain_vals = np.linspace(rain_min, rain_max, 30)
+agri_vals = np.linspace(agri_min, agri_max, 30)
+ind_vals  = np.linspace(ind_min, ind_max, 30)
+
+# First surface: Rainfall × Agriculture
+x1, y1 = np.meshgrid(rain_vals, agri_vals)
+z1 = np.zeros_like(x1)
+
+for i in range(30):
+	for j in range(30):
+		sim_temp = ctrl.ControlSystemSimulation(scarcity_ctrl)
+		sim_temp.input['rainfall'] = x1[i, j]
+		sim_temp.input['agriculture'] = y1[i, j]
+		sim_temp.input['industry'] = ind_min
 		try:
-			sim.compute()
-			z[j, i] = sim.output.get('Water Scarcity Level', np.nan)
+			sim_temp.compute()
+			z1[i, j] = sim_temp.output.get('scarcity', np.nan)
 		except Exception:
-			z[j, i] = np.nan
+			z1[i, j] = np.nan
 
-# 3D Surface Plot
-fig = plt.figure(figsize=(10, 6))
-ax = fig.add_subplot(111, projection='3d')
-ax.plot_surface(x, y, z, cmap='viridis')
+z1 = np.nan_to_num(z1, nan=0.0)
 
-ax.contourf(x, y, z, zdir='z', offset=ax.get_zlim()[0], cmap='viridis', alpha=0.5)
-ax.contourf(x, y, z, zdir='x', offset=x.max()*1.5, cmap='viridis', alpha=0.5)
-ax.contourf(x, y, z, zdir='y', offset=y.max()*1.5, cmap='viridis', alpha=0.5)
+# Second surface: Rainfall × Industry
+x2, y2 = np.meshgrid(rain_vals, ind_vals)
+z2 = np.zeros_like(x2)
 
-ax.view_init(30, 200)
-ax.set_xlabel('Rainfall Impact (mm)')
-ax.set_ylabel('Groundwater Depletion Rate (%)')
-ax.set_zlabel('Predicted Water Scarcity Level')
-ax.set_title('3D Fuzzy Surface: Rainfall vs Depletion vs Scarcity')
+for i in range(30):
+	for j in range(30):
+		sim_temp = ctrl.ControlSystemSimulation(scarcity_ctrl)
+		sim_temp.input['rainfall'] = x2[i, j]
+		sim_temp.input['industry'] = y2[i, j]
+		sim_temp.input['agriculture'] = agri_min
+		try:
+			sim_temp.compute()
+			z2[i, j] = sim_temp.output.get('scarcity', np.nan)
+		except Exception:
+			z2[i, j] = np.nan
+
+z2 = np.nan_to_num(z2, nan=0.0)
+
+# Combined figure
+fig = plt.figure(figsize=(14, 6))
+
+# Left plot: Rainfall vs Agriculture
+ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+surf1 = ax1.plot_surface(x1, y1, z1, cmap='viridis', edgecolor='none')
+ax1.set_xlabel('Rainfall Impact (mm)')
+ax1.set_ylabel('Agricultural Water Use (%)')
+ax1.set_zlabel('Water Scarcity Level')
+ax1.set_title('Rainfall vs Agriculture vs Scarcity')
+fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
+
+# Right plot: Rainfall vs Industry
+ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+surf2 = ax2.plot_surface(x2, y2, z2, cmap='plasma', edgecolor='none')
+ax2.set_xlabel('Rainfall Impact (mm)')
+ax2.set_ylabel('Industrial Water Use (%)')
+ax2.set_zlabel('Water Scarcity Level')
+ax2.set_title('Rainfall vs Industry vs Scarcity')
+fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
+
+plt.tight_layout()
 plt.show()
